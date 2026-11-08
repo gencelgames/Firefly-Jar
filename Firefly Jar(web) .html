@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Firefly Jar</title>
+<style>
+:root{--night:#14163a;--deep:#0b0c24;--amber:#ffc857;--moss:#7bd88f;--wasp:#ff6b6b;--mist:#e8e6f5;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{height:100%;margin:0;background:var(--deep);color:var(--mist);font-family:Palatino,"Palatino Linotype",Georgia,serif;overflow:hidden;touch-action:none}
+#wrap{position:relative;height:100%;display:flex;flex-direction:column}
+#hud{display:flex;justify-content:space-between;padding:10px 16px;font-size:18px}
+#hud b{color:var(--amber);font-weight:700}
+canvas{flex:1;width:100%;min-height:0;display:block;background:radial-gradient(ellipse at 50% 100%,#262a63,var(--night) 60%,var(--deep))}
+#ov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;background:rgba(11,12,36,.82);padding:24px}
+#ov h1{font-size:44px;margin:0;color:var(--amber);font-weight:400;font-style:italic}
+#ov p{margin:0;max-width:30ch;line-height:1.5}
+button{font:inherit;font-size:20px;padding:12px 28px;border:2px solid var(--amber);background:var(--amber);color:var(--deep);border-radius:999px;cursor:pointer}
+button:focus-visible{outline:3px solid var(--mist);outline-offset:3px}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud"><span>Caught <b id="sc">0</b></span><span>Best <b id="bs">0</b></span><span>Lives <b id="lv">3</b></span></div>
+  <canvas id="c"></canvas>
+  <div id="ov">
+    <h1 id="t">Firefly Jar</h1>
+    <p id="m">Slide the jar to catch glowing fireflies. Dodge the wasps. Three stings and the night is over.</p>
+    <button id="go">Start catching</button>
+    <p style="font-size:14px;opacity:.7">Drag or move your pointer, or use the arrow keys.</p>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const $=id=>document.getElementById(id);
+let W,H,dpr;
+function fit(){dpr=window.devicePixelRatio||1;const r=cv.getBoundingClientRect();W=r.width;H=r.height;cv.width=W*dpr;cv.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0)}
+addEventListener('resize',fit);fit();
+
+let best=0;
+try{best=+localStorage.getItem('fj-best')||0}catch(e){}
+$('bs').textContent=best;
+
+let jar,flies,wasps,score,lives,running,last,spawnT,waspT,hurt,stars,keys={};
+stars=Array.from({length:50},()=>({x:Math.random(),y:Math.random()*.7,r:Math.random()*1.4+.3}));
+
+function reset(){
+  jar={x:W/2,y:H-50,w:62,h:56,tx:W/2};
+  flies=[];wasps=[];score=0;lives=3;spawnT=0;waspT=4;hurt=0;
+  $('sc').textContent=0;$('lv').textContent=3;
+}
+function spawnFly(){
+  flies.push({x:Math.random()*(W-40)+20,y:-10,vy:40+Math.random()*50+score*1.2,ph:Math.random()*6,gold:Math.random()<.12});
+}
+function spawnWasp(){
+  const x=Math.random()*W;
+  wasps.push({x,y:-20,vy:70+Math.min(score*2,120),vx:0,ph:Math.random()*6});
+}
+
+function setTarget(e){
+  const r=cv.getBoundingClientRect();
+  const p=e.touches?e.touches[0]:e;
+  jar.tx=p.clientX-r.left;
+}
+addEventListener('pointermove',e=>{if(running)setTarget(e)});
+addEventListener('pointerdown',e=>{if(running)setTarget(e)});
+addEventListener('keydown',e=>{keys[e.key]=true});
+addEventListener('keyup',e=>{keys[e.key]=false});
+
+function update(dt){
+  if(keys.ArrowLeft||keys.a)jar.tx-=420*dt;
+  if(keys.ArrowRight||keys.d)jar.tx+=420*dt;
+  jar.tx=Math.max(jar.w/2,Math.min(W-jar.w/2,jar.tx));
+  jar.x+=(jar.tx-jar.x)*Math.min(1,dt*14);
+  jar.y=H-50;
+  hurt=Math.max(0,hurt-dt);
+  spawnT-=dt;if(spawnT<=0){spawnFly();spawnT=Math.max(.35,1-score*.012)}
+  waspT-=dt;if(waspT<=0){spawnWasp();waspT=Math.max(1.6,5-score*.06)}
+  for(const f of flies){f.y+=f.vy*dt;f.ph+=dt*4;f.x+=Math.sin(f.ph)*30*dt}
+  for(const w of wasps){
+    w.ph+=dt*10;w.y+=w.vy*dt;
+    const dx=jar.x-w.x;w.vx+=Math.sign(dx)*60*dt;w.vx=Math.max(-90,Math.min(90,w.vx));w.x+=w.vx*dt;
+  }
+  const jt=jar.y-jar.h/2,jl=jar.x-jar.w/2,jr=jar.x+jar.w/2;
+  flies=flies.filter(f=>{
+    if(f.y>jt&&f.y<jt+30&&f.x>jl&&f.x<jr){
+      score+=f.gold?3:1;$('sc').textContent=score;return false}
+    return f.y<H+20;
+  });
+  wasps=wasps.filter(w=>{
+    if(w.y>jt&&w.y<jt+jar.h&&w.x>jl-6&&w.x<jr+6){
+      lives--;hurt=.5;$('lv').textContent=lives;
+      if(lives<=0)end();
+      return false}
+    return w.y<H+30;
+  });
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#e8e6f5';
+  for(const s of stars){ctx.globalAlpha=.5;ctx.beginPath();ctx.arc(s.x*W,s.y*H,s.r,0,7);ctx.fill()}
+  ctx.globalAlpha=1;
+  // grass
+  ctx.fillStyle='#0b0c24';
+  ctx.beginPath();ctx.moveTo(0,H);
+  for(let x=0;x<=W;x+=14)ctx.lineTo(x,H-14-((x*7)%11));
+  ctx.lineTo(W,H);ctx.fill();
+  for(const f of flies){
+    const g=ctx.createRadialGradient(f.x,f.y,0,f.x,f.y,f.gold?26:16);
+    const c=f.gold?'255,200,87':'123,216,143';
+    g.addColorStop(0,`rgba(${c},.95)`);g.addColorStop(1,`rgba(${c},0)`);
+    ctx.fillStyle=g;ctx.beginPath();ctx.arc(f.x,f.y,f.gold?26:16,0,7);ctx.fill();
+  }
+  for(const w of wasps){
+    ctx.save();ctx.translate(w.x,w.y);
+    ctx.fillStyle='#ff6b6b';ctx.beginPath();ctx.ellipse(0,0,9,13,0,0,7);ctx.fill();
+    ctx.fillStyle='#14163a';ctx.fillRect(-9,-3,18,3);ctx.fillRect(-8,4,16,3);
+    ctx.fillStyle='rgba(232,230,245,.6)';
+    const f=Math.sin(w.ph)*4;
+    ctx.beginPath();ctx.ellipse(-10,-6,8,4+f/2,-.5,0,7);ctx.ellipse(10,-6,8,4+f/2,.5,0,7);ctx.fill();
+    ctx.restore();
+  }
+  // jar
+  const x=jar.x,y=jar.y,w=jar.w,h=jar.h;
+  const glow=ctx.createRadialGradient(x,y,0,x,y,w);
+  glow.addColorStop(0,`rgba(255,200,87,${.15+Math.min(score,40)/120})`);glow.addColorStop(1,'rgba(255,200,87,0)');
+  ctx.fillStyle=glow;ctx.beginPath();ctx.arc(x,y,w,0,7);ctx.fill();
+  ctx.strokeStyle=hurt>0?'#ff6b6b':'#e8e6f5';ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(x-w/2+6,y-h/2);ctx.lineTo(x-w/2,y-h/2+10);ctx.lineTo(x-w/2,y+h/2-8);
+  ctx.quadraticCurveTo(x-w/2,y+h/2,x-w/2+8,y+h/2);ctx.lineTo(x+w/2-8,y+h/2);
+  ctx.quadraticCurveTo(x+w/2,y+h/2,x+w/2,y+h/2-8);ctx.lineTo(x+w/2,y-h/2+10);ctx.lineTo(x+w/2-6,y-h/2);
+  ctx.stroke();
+  ctx.fillStyle='rgba(255,200,87,.8)';
+  for(let i=0;i<Math.min(score,14);i++){
+    const a=i*2.4+performance.now()/900;
+    ctx.beginPath();ctx.arc(x+Math.cos(a)*(w/2-14),y+Math.sin(a*1.3)*(h/2-14)+4,2.4,0,7);ctx.fill();
+  }
+}
+
+function loop(t){
+  if(!running)return;
+  const dt=Math.min(.05,(t-last)/1000);last=t;
+  update(dt);if(running)draw();
+  requestAnimationFrame(loop);
+}
+function start(){
+  fit();reset();running=true;$('ov').classList.add('hide');
+  last=performance.now();requestAnimationFrame(loop);
+}
+function end(){
+  running=false;draw();
+  const isBest=score>best;
+  if(isBest){best=score;$('bs').textContent=best;try{localStorage.setItem('fj-best',best)}catch(e){}}
+  $('t').textContent='Night is over';
+  $('m').textContent=`You caught ${score} ${score===1?'firefly':'fireflies'}.`+(isBest&&score>0?' That’s a new best.':'');
+  $('go').textContent='Play again';
+  $('ov').classList.remove('hide');
+}
+$('go').addEventListener('click',start);
+reset();draw();
+</script>
+</body>
+</html>
